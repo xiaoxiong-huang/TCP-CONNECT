@@ -1,0 +1,453 @@
+/* 
+ *  * echoserver.c - A simple connection-based echo server 
+ *   * usage: echoserver <port>
+ *    */
+#include <time.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <netdb.h>
+#include <sys/types.h> 
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+#define BUFSIZE 1024
+#define message_nums 2
+
+#if 0
+/* 
+ *  * Structs exported from netinet/in.h (for easy reference)
+ *   */
+
+/* Internet address */
+struct in_addr {
+  unsigned int s_addr; 
+};
+
+/* Internet style socket address */
+struct sockaddr_in  {
+  unsigned short int sin_family; /* Address family */
+  unsigned short int sin_port;   /* Port number */
+  struct in_addr sin_addr;	 /* IP address */
+  unsigned char sin_zero[...];   /* Pad to size of 'struct sockaddr' */
+};
+
+/*
+ *  * Struct exported from netdb.h
+ *   */
+
+/* Domain name service (DNS) host entry */
+struct hostent {
+  char    *h_name;        /* official name of host */
+  char    **h_aliases;    /* alias list */
+  int     h_addrtype;     /* host address type */
+  int     h_length;       /* length of address */
+  char    **h_addr_list;  /* list of addresses */
+}
+#endif
+
+int message_num=0;
+
+
+struct message{
+    char key[100];
+    char object[80000000];
+    time_t time_of_born;
+    double time_of_died;
+    double time_of_retrieved;
+    int size;
+};
+/*
+ *  * error - wrapper for perror
+ *   */
+void error(char *msg) {
+  perror(msg);
+  exit(1);
+}
+
+/*sent header request to web server
+ *pass in the header we got from
+ *client.*/
+int sent_HR(char* Header,struct message **message_log,struct message ***message_p,time_t begin,char* k){
+  int sockfd, portno, n;
+  struct sockaddr_in serveraddr;
+  struct hostent *server;
+  char *hostname;
+  char port_no[10];//port
+  char addr_no[100];//address
+  char buf[BUFSIZE];
+  char *p;
+  char a[BUFSIZE];
+  char *eptr;
+  time_t now;
+
+  /* get the port number from header*/
+  
+  printf("%s\n",Header);
+  p=strstr(Header,"Host")+6;
+  p=strstr(p,":")+1;
+  strcpy(a,p);
+  /*if there are not port in get*/
+  int i_port = 0;
+  if(a[0]==' '){
+    strcpy(port_no,"80");
+  }
+  /*there is port in get*/
+  else{
+    i_port = 1;
+    p=strstr(a,"\r\n");
+    *p='\0';
+    strcpy(port_no,a);
+  }
+  printf("+++++++\nport number is : %s\n+++++++\n",port_no);
+
+  /* get the host name from header*/
+  p=strstr(Header,"Host:")+6;
+  strcpy(a,p);
+  if(i_port == 1){
+    p=strstr(a,":");
+  }
+  else{
+    p=strstr(a,"\r\n");
+  }
+  *p='\0';
+  strcpy(addr_no,a); 
+
+  /*get the life time from header*/
+  
+  
+
+   // define the hostname and port
+  hostname = addr_no;
+  portno=atoi(port_no);
+  printf("+++++++\n%s\n+++++++\n",hostname);
+  printf("key is : %s\n",k);
+  
+
+  /* socket: create the socket */
+  sockfd = socket(AF_INET, SOCK_STREAM, 0);
+  if (sockfd < 0) 
+      error("ERROR opening socket");
+
+  /* gethostbyname: get the server's DNS entry */
+  server = gethostbyname(hostname);
+  if (server == NULL) {
+      fprintf(stderr,"ERROR, no such host as %s\n", hostname);
+      exit(0);
+  }
+
+  /* build the server's Internet address */
+  bzero((char *) &serveraddr, sizeof(serveraddr));
+  serveraddr.sin_family = AF_INET;
+  bcopy((char *)server->h_addr, 
+  (char *)&serveraddr.sin_addr.s_addr, server->h_length);
+  serveraddr.sin_port = htons(portno);
+
+  /* connect: create a connection with the server */
+  if (connect(sockfd, &serveraddr, sizeof(serveraddr)) < 0) 
+    error("ERROR connecting");
+
+  /* get message line from the user */
+
+  /* send the message line to the server */
+  n = write(sockfd, Header, strlen(Header));
+  if (n < 0) 
+    error("ERROR writing to socket");
+
+  /* cach is not full 
+   * we can put in more
+   */
+  bzero(a,BUFSIZE);
+  strcpy(a,"3600");
+  if(message_num<message_nums){
+    printf("going to cach\n");
+    message_log[message_num] = malloc(sizeof(struct message));
+    //write key to memory
+    strcpy(message_log[message_num]->key,k);
+
+    //write retrieved time
+    message_log[message_num] -> time_of_retrieved = difftime(begin,begin);
+
+    //write time of born
+    time(&(message_log[message_num] -> time_of_born));
+
+    
+    //write object to memory
+    /*use while loop to keep reciving*/
+    n=1;
+    int sum=0;
+    while(n>0){
+      memset(buf,'\0', BUFSIZE);
+      n = read(sockfd, buf, BUFSIZE);
+      //find the max age 
+      if(strcmp(a,"3600")==0){
+        if((p=strstr(buf,"Cache-Control")!=NULL)){
+          if((p=strstr(buf,"max-age")!=NULL)){
+            p=strstr(buf,"max-age")+8;
+            bzero(a,BUFSIZE);
+            strcpy(a,p);
+            p=strstr(a,"\r\n");
+            *p='\0';
+          }
+        printf("cache control in this is : %s\n",a);
+        }
+      }
+      memcpy((message_log[message_num]->object)+sum,buf,n);
+      sum=sum+n;
+      if (n < 0) 
+      error("ERROR reading from socket");
+    }
+    message_log[message_num] -> size = sum;
+    //write time of died
+    message_log[message_num] -> time_of_died = (double)atol(a)+difftime(time(&now),begin);
+
+   
+    message_num ++;
+    close(sockfd);
+    return message_num-1;
+  }
+  else{
+    //printf("cash is full, making space for new.\n");
+    int target = -1;
+    double time_spend = difftime(time(&now),begin);
+    double min_r = 0;
+    //find target to remove if some one are stale
+    for(int j=0; j<message_num; j++){
+        if(message_log[j]->time_of_died< time_spend){
+            //printf("this one will be remove. %s\n",message_log[j]->key);
+            target = j;
+            break;
+        }
+    }
+    //if no one is stale
+    if(target==-1){
+        //printf("cant find any one stale!!!!!");
+        min_r = message_log[0]->time_of_retrieved;
+        target = 0;
+        //find the one have least retrieved time
+        for (int j = 1; j < message_num; j++)
+        {
+            if (min_r<message_log[j]->time_of_retrieved)
+            {
+                min_r = message_log[j]->time_of_retrieved;
+                target = j;
+            }
+        }
+    }
+    //write key to memory
+    strcpy(message_log[target]->key,k);
+
+    //write retrieved time
+    message_log[target] -> time_of_retrieved = difftime(begin,begin);
+
+    //write time of born
+    time(&(message_log[target] -> time_of_born));
+
+
+
+    //write object to memory
+    /*use while loop to keep reciving*/
+    n=1;
+    int sum=0;
+    while(n>0){
+      memset(buf,'\0', BUFSIZE);
+      n = read(sockfd, buf, BUFSIZE);
+      //find the max age 
+      if(strcmp(a,"3600")==0){
+        if((p=strstr(buf,"Cache-Control")!=NULL)){
+          if((p=strstr(buf,"max-age")!=NULL)){
+            p=strstr(buf,"max-age")+8;
+            bzero(a,BUFSIZE);
+            strcpy(a,p);
+            p=strstr(a,"\r\n");
+            *p='\0';
+          }
+        printf("cache control in this is : %s\n",a);
+        }
+      }
+      memcpy((message_log[target]->object)+sum,buf,n);
+      sum=sum+n;
+      if (n < 0) 
+      error("ERROR reading from socket");
+    }
+    message_log[target] -> size = sum;
+    //write time of died
+    //write time of died
+    message_log[target] -> time_of_died = (double)atol(a)+difftime(time(&now),begin);
+    close(sockfd);
+    return target;
+  }
+}
+
+
+/* main function handle listening the client and
+ * read the cach.
+ */
+int main(int argc, char **argv) {
+  int listenfd; /* listening socket */
+  int connfd; /* connection socket */
+  int portno; /* port to listen on */
+  int clientlen; /* byte size of client's address */
+  struct sockaddr_in serveraddr; /* server's addr */
+  struct sockaddr_in clientaddr; /* client addr */
+  struct hostent *hostp; /* client host info */
+  char buf[BUFSIZE]; /* message buffer */
+  char *hostaddrp; /* dotted decimal host addr string */
+  int optval; /* flag value for setsockopt */
+  int n; /* message byte size */
+  char *p;
+  char kk[2024];/*key for the header*/
+  time_t begin, now;
+  time(&begin);
+
+  /* check command line args */
+  if (argc != 2) {
+    fprintf(stderr, "usage: %s <port>\n", argv[0]);
+    exit(1);
+  }
+  portno = atoi(argv[1]);
+
+  /* socket: create a socket */
+  listenfd = socket(AF_INET, SOCK_STREAM, 0);
+  if (listenfd < 0) 
+    error("ERROR opening socket");
+
+  /* setsockopt: Handy debugging trick that lets 
+ *    * us rerun the server immediately after we kill it; 
+ *       * otherwise we have to wait about 20 secs. 
+ *          * Eliminates "ERROR on binding: Address already in use" error. 
+ *             */
+  optval = 1;
+  setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, 
+	     (const void *)&optval , sizeof(int));
+
+  /* build the server's internet address */
+  bzero((char *) &serveraddr, sizeof(serveraddr));
+  serveraddr.sin_family = AF_INET; /* we are using the Internet */
+  serveraddr.sin_addr.s_addr = htonl(INADDR_ANY); /* accept reqs to any IP addr */
+  serveraddr.sin_port = htons((unsigned short)portno); /* port to listen on */
+
+  /* bind: associate the listening socket with a port */
+  if (bind(listenfd, (struct sockaddr *) &serveraddr, 
+	   sizeof(serveraddr)) < 0) 
+    error("ERROR on binding");
+
+  /* listen: make it a listening socket ready to accept connection requests */
+  if (listen(listenfd, 5) < 0) /* allow 5 requests to queue up */ 
+    error("ERROR on listen");
+
+  /* allocate the cach*/
+  struct message **message_log = malloc(10*sizeof(struct message*));
+  struct message ***message_p = &message_log;
+
+
+  /* main loop: wait for a connection request, echo input line, 
+ *      then close connection. */
+  clientlen = sizeof(clientaddr);
+  while (1) {
+
+    /* accept: wait for a connection request */
+    connfd = accept(listenfd, (struct sockaddr *) &clientaddr, &clientlen);
+    if (connfd < 0) 
+      error("ERROR on accept");
+    
+    /* gethostbyaddr: determine who sent the message */
+    hostp = gethostbyaddr((const char *)&clientaddr.sin_addr.s_addr, 
+			  sizeof(clientaddr.sin_addr.s_addr), AF_INET);
+    if (hostp == NULL)
+      error("ERROR on gethostbyaddr ");
+    hostaddrp = inet_ntoa(clientaddr.sin_addr);
+    if (hostaddrp == NULL)
+      error("ERROR on inet_ntoa\n");
+    printf("server established connection with %s (%s)\n", 
+	   hostp->h_name, hostaddrp);
+    
+
+    /* read: read input string from the client */
+    bzero(buf, BUFSIZE);
+    int length = 0;
+    while (1) {
+      printf("reading\n");
+      n = read(connfd, buf+length, BUFSIZE);
+      length += n;
+      if(buf[length-2]=='\r' && buf[length-1]=='\n' && buf[length-4]=='\r' && buf[length-3]=='\n'){
+        break;
+      }
+      // if(buf[n-1]=='\n' ){
+      //   break;
+      // }
+    }
+    printf("finish reading\n");
+    /*End of liston form client
+     *
+     */
+
+    
+
+
+   
+    /* write: echo the input string back to the client */
+    /*get the key from header*/
+    p=strstr(buf,"GET")+4;
+    strcpy(kk,p);
+    p=strstr(kk,"\r\n");
+    *p='\0';
+
+    int contain = -1;/* will be -1 if key can not find, pos of key otherwise*/
+    int new = 0;
+    for(int i=0; i<message_num; i++){
+      time(&now);
+      //printf("current number od cach is ::::%d\n",message_num);
+      if((strcmp((*message_p)[i]->key,kk)==0)&&(difftime(now,begin)<(*message_p)[i]->time_of_died)){
+          contain = i;
+          break;
+      }
+    }
+    if(contain<0){
+      contain=sent_HR(buf,message_log,message_p,begin,kk);
+      new = 1;
+    }
+    message_log[contain]->time_of_retrieved = difftime(time(&now),begin);
+    //printf("find it !!!!!!\n");
+    //printf("size of the object is %ld\n",strlen((*message_p)[contain]->object));
+        
+    //printf("age of the object is %f\n",difftime(time(&now),(*message_p)[contain]->time_of_born));
+    //printf("max_age of the object is %f\n",(*message_p)[contain]->time_of_died);
+    double AGE = difftime(time(&now),(*message_p)[contain]->time_of_born);
+    printf("MAX aAGE is %f\n",(*message_p)[contain]->time_of_died);
+    char age_s[20];
+    if(snprintf(age_s,20,"%f",AGE)<0)
+      error("ERROR CONVERT AGE TO STRING");
+
+
+    //test
+    // printf("%s",(*message_p)[contain]->object);
+
+
+    //create age section for header
+    char as[50];
+    strcpy(as,"\r\n");
+    strcat(as,"AGE: ");
+    strcat(as,age_s);
+    char *ii;
+    int first_line;
+    ii = strstr((*message_p)[contain]->object,"\r\n");
+    //respond the first line
+    n = write(connfd, (*message_p)[contain]->object, strlen((*message_p)[contain]->object)-strlen(ii));
+    first_line = n;
+    if (n < 0)
+      error("ERROR writing to socket");
+    //respond the age line
+    if(new != 1)
+      n = write(connfd,as,strlen(as));
+    if (n < 0)
+      error("ERROR writing to socket");
+    //respond the rest  
+    n = write(connfd, ii, ((*message_p)[contain]->size)-first_line);
+    if (n < 0)
+      error("ERROR writing to socket");
+    close(connfd);
+  }
+}
